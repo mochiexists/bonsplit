@@ -63,6 +63,7 @@ struct TabItemView: View {
     let onZoomToggle: () -> Void
     let onContextAction: (TabContextAction) -> Void
     let onMoveDestination: (String) -> Void
+    let onCustomItem: (String) -> Void
 
     @State private var isHovered = false
     @State private var isCloseHovered = false
@@ -195,7 +196,8 @@ struct TabItemView: View {
         .background(TabContextMenuPresenter(
             snapshot: TabContextMenuSnapshot(tabId: tab.id, state: contextMenuState),
             onContextAction: onContextAction,
-            onMoveDestination: onMoveDestination
+            onMoveDestination: onMoveDestination,
+            onCustomItem: onCustomItem
         ))
         .onTapGesture {
             onSelect()
@@ -566,6 +568,7 @@ struct TabContextMenuSnapshot {
 final class TabContextMenuActionTarget: NSObject {
     var onContextAction: ((TabContextAction) -> Void)?
     var onMoveDestination: ((String) -> Void)?
+    var onCustomItem: ((String) -> Void)?
 
     @objc func performContextAction(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
@@ -578,6 +581,11 @@ final class TabContextMenuActionTarget: NSObject {
     @objc func performMoveDestination(_ sender: NSMenuItem) {
         guard let destinationId = sender.representedObject as? String else { return }
         onMoveDestination?(destinationId)
+    }
+
+    @objc func performCustomItem(_ sender: NSMenuItem) {
+        guard let identifier = sender.representedObject as? String else { return }
+        onCustomItem?(identifier)
     }
 }
 
@@ -735,6 +743,13 @@ enum TabContextMenuBuilder {
             )
         }
 
+        if !state.customItems.isEmpty {
+            menu.addItem(.separator())
+            for item in state.customItems {
+                addCustomItem(item, target: target, to: menu)
+            }
+        }
+
         menu.addItem(.separator())
 
         addAction(
@@ -781,6 +796,24 @@ enum TabContextMenuBuilder {
         item.submenu = submenu
         item.isEnabled = state.canMoveToNewWorkspace || !state.moveDestinations.isEmpty
         return item
+    }
+
+    @discardableResult
+    private static func addCustomItem(
+        _ item: TabContextMenuItem,
+        target: TabContextMenuActionTarget,
+        to menu: NSMenu
+    ) -> NSMenuItem {
+        let menuItem = NSMenuItem(
+            title: item.title,
+            action: #selector(TabContextMenuActionTarget.performCustomItem(_:)),
+            keyEquivalent: ""
+        )
+        menuItem.target = target
+        menuItem.representedObject = item.id
+        menuItem.isEnabled = item.isEnabled
+        menu.addItem(menuItem)
+        return menuItem
     }
 
     @discardableResult
@@ -832,6 +865,7 @@ private struct TabContextMenuPresenter: NSViewRepresentable {
     let snapshot: TabContextMenuSnapshot
     let onContextAction: (TabContextAction) -> Void
     let onMoveDestination: (String) -> Void
+    let onCustomItem: (String) -> Void
 
     final class Coordinator {
         var snapshot: TabContextMenuSnapshot
@@ -859,6 +893,7 @@ private struct TabContextMenuPresenter: NSViewRepresentable {
         let coordinator = Coordinator(snapshot: snapshot)
         coordinator.actionTarget.onContextAction = onContextAction
         coordinator.actionTarget.onMoveDestination = onMoveDestination
+        coordinator.actionTarget.onCustomItem = onCustomItem
         return coordinator
     }
 
@@ -890,5 +925,6 @@ private struct TabContextMenuPresenter: NSViewRepresentable {
         context.coordinator.snapshot = snapshot
         context.coordinator.actionTarget.onContextAction = onContextAction
         context.coordinator.actionTarget.onMoveDestination = onMoveDestination
+        context.coordinator.actionTarget.onCustomItem = onCustomItem
     }
 }
