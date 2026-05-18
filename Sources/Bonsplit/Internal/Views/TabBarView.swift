@@ -734,6 +734,7 @@ struct TabContextMenuState {
     let isZoomed: Bool
     let hasSplits: Bool
     let moveDestinations: [TabContextMoveDestination]
+    let customItems: [TabContextMenuItem]
     let shortcuts: [TabContextAction: KeyboardShortcut]
 
     var canMarkAsUnread: Bool {
@@ -1155,6 +1156,9 @@ struct TabBarView: View {
             },
             onMoveDestination: { destinationId in
                 controller.requestTabMove(toDestination: destinationId, for: TabID(id: tab.id), inPane: pane.id)
+            },
+            onCustomItem: { identifier in
+                controller.requestTabContextMenuItem(identifier, for: TabID(id: tab.id), inPane: pane.id)
             }
         )
         .background(
@@ -1220,6 +1224,7 @@ struct TabBarView: View {
             isZoomed: splitViewController.zoomedPaneId == pane.id,
             hasSplits: splitViewController.rootNode.allPaneIds.count > 1,
             moveDestinations: controller.tabContextMoveDestinationsProvider?(TabID(id: tab.id), pane.id) ?? [],
+            customItems: controller.tabContextMenuItemsProvider?(TabID(id: tab.id), pane.id) ?? [],
             shortcuts: controller.contextMenuShortcuts
         )
     }
