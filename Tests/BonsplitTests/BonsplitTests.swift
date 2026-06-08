@@ -1544,8 +1544,10 @@ final class BonsplitTests: XCTestCase {
         let target = TabContextMenuActionTarget()
         var selectedAction: TabContextAction?
         var selectedDestinationId: String?
+        var selectedCustomItemId: String?
         target.onContextAction = { selectedAction = $0 }
         target.onMoveDestination = { selectedDestinationId = $0 }
+        target.onCustomItem = { selectedCustomItemId = $0 }
         let state = TabContextMenuState(
             isPinned: false,
             isUnread: false,
@@ -1563,6 +1565,9 @@ final class BonsplitTests: XCTestCase {
             forkConversationDefaultAction: .forkConversationRight,
             isZoomed: false,
             hasSplits: true,
+            customItems: [
+                TabContextMenuItem(id: "copyPath", title: "Copy Path", isEnabled: true)
+            ],
             shortcuts: [:]
         )
         var moveDestinationRequestCount = 0
@@ -1593,6 +1598,10 @@ final class BonsplitTests: XCTestCase {
         let workspaceItem = try XCTUnwrap(moveItem?.submenu?.items.dropFirst().first)
         target.performMoveDestination(workspaceItem)
         XCTAssertEqual(selectedDestinationId, "workspace:abc")
+
+        let customItem = try XCTUnwrap(menu.items.first { $0.title == "Copy Path" })
+        target.performCustomItem(customItem)
+        XCTAssertEqual(selectedCustomItemId, "copyPath")
     }
 
     @MainActor
