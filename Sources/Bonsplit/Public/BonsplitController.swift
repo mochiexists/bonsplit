@@ -1,6 +1,21 @@
 import Foundation
 import SwiftUI
 
+/// A checkable context-menu item for a tab bar split action button (rendered as
+/// a native menu Toggle). The host supplies the current state and a setter.
+@MainActor
+public struct SplitButtonContextToggle {
+    public let title: String
+    public let isOn: Bool
+    public let onToggle: (Bool) -> Void
+
+    public init(title: String, isOn: Bool, onToggle: @escaping (Bool) -> Void) {
+        self.title = title
+        self.isOn = isOn
+        self.onToggle = onToggle
+    }
+}
+
 /// Main controller for the split tab bar system
 @MainActor
 @Observable
@@ -44,10 +59,17 @@ public final class BonsplitController {
     public var configuration: BonsplitConfiguration
 
     /// Raw values (see `SplitActionButton.Action.rawValue`) of tab bar split
-    /// action buttons that should render with a highlight/glow. Hosts mutate
-    /// this to reflect a toggled mode (e.g. a browser button that opens links
-    /// externally). Observable, so the tab bar re-renders on change.
+    /// action buttons that should render with an accent-tinted glyph. Hosts
+    /// mutate this to reflect a toggled mode (e.g. a browser button that opens
+    /// links externally). Observable, so the tab bar re-renders on change.
     public var highlightedSplitButtonActions: Set<String> = []
+
+    /// Host-provided checkable context-menu item shown when a split action
+    /// button is right-clicked (returns nil for buttons without a menu). Lets
+    /// the host expose a mode toggle — e.g. "Open in Browser" on the browser
+    /// button — as a native checkmarked menu item.
+    @ObservationIgnored
+    public var splitButtonContextToggleProvider: ((BonsplitConfiguration.SplitActionButton.Action) -> SplitButtonContextToggle?)?
 
     /// When false, drop delegates reject all drags. Set to false for inactive workspaces
     /// so their views (kept alive in a ZStack for state preservation) don't intercept drags
@@ -218,15 +240,6 @@ public final class BonsplitController {
     /// Request the delegate to handle a host-defined tab bar action.
     public func requestCustomAction(_ identifier: String, inPane pane: PaneID) {
         delegate?.splitTabBar(self, didRequestCustomAction: identifier, inPane: pane)
-    }
-
-    /// Request the delegate to handle a secondary (right / control) click on a
-    /// tab bar split action button.
-    public func requestSplitButtonSecondaryAction(
-        _ action: BonsplitConfiguration.SplitActionButton.Action,
-        inPane pane: PaneID
-    ) {
-        delegate?.splitTabBar(self, didRequestSplitButtonSecondaryAction: action, inPane: pane)
     }
 
     /// Request the delegate to handle a tab context-menu action.

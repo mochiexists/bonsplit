@@ -1789,16 +1789,19 @@ struct TabBarView: View {
             ForEach(buttons.indices, id: \.self) { index in
                 let button = buttons[index]
                 let isHighlighted = controller.highlightedSplitButtonActions.contains(button.action.rawValue)
-                splitActionButton(button, tooltips: tooltips)
-                    .background(splitActionButtonHighlight(isHighlighted))
-                    .overlay(
-                        SplitActionButtonSecondaryClickCatcher {
-                            guard splitViewController.isInteractive else { return }
-                            controller.requestSplitButtonSecondaryAction(button.action, inPane: pane.id)
-                        }
-                    )
+                splitActionButton(button, tooltips: tooltips, isHighlighted: isHighlighted)
                 .accessibilityIdentifier(splitActionButtonAccessibilityIdentifier(button))
                 .safeHelp(splitActionButtonTooltip(button, tooltips: tooltips))
+                .contextMenu {
+                    // Resolve the toggle when the menu opens so its checkmark
+                    // reflects the current host state.
+                    if let contextToggle = controller.splitButtonContextToggleProvider?(button.action) {
+                        Toggle(contextToggle.title, isOn: Binding(
+                            get: { contextToggle.isOn },
+                            set: { contextToggle.onToggle($0) }
+                        ))
+                    }
+                }
             }
         }
         .padding(.leading, TabBarStyling.splitButtonsLeadingPadding)
@@ -1809,10 +1812,11 @@ struct TabBarView: View {
     @ViewBuilder
     private func splitActionButton(
         _ button: BonsplitConfiguration.SplitActionButton,
-        tooltips: BonsplitConfiguration.SplitButtonTooltips
+        tooltips: BonsplitConfiguration.SplitButtonTooltips,
+        isHighlighted: Bool
     ) -> some View {
         if button.activatesOnMouseDown {
-            splitActionButtonIcon(button.icon)
+            splitActionButtonIcon(button.icon, isHighlighted: isHighlighted)
                 .frame(height: tabBarLayout.splitActionButtonHeight)
                 .contentShape(Rectangle())
                 .foregroundStyle(TabBarColors.splitActionIcon(for: appearance, isPressed: false))
@@ -1829,7 +1833,7 @@ struct TabBarView: View {
             Button {
                 performSplitActionButton(button)
             } label: {
-                splitActionButtonIcon(button.icon)
+                splitActionButtonIcon(button.icon, isHighlighted: isHighlighted)
             }
             .buttonStyle(SplitActionButtonStyle(appearance: appearance, layout: tabBarLayout))
         }
@@ -1857,36 +1861,23 @@ struct TabBarView: View {
         max(0.1, appearance.tabTitleFontSize / TabBarMetrics.titleFontSize)
     }
 
-    /// Soft accent glow drawn behind a split action button when the host marks
-    /// its action as highlighted (e.g. the browser button while it opens links
-    /// in the external default browser).
     @ViewBuilder
-    private func splitActionButtonHighlight(_ isHighlighted: Bool) -> some View {
-        if isHighlighted {
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Color.accentColor.opacity(0.22))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
-                )
-                .shadow(color: Color.accentColor.opacity(0.55), radius: 4)
-                .tabBarButtonAnimationsDisabled()
-        } else {
-            Color.clear
-        }
-    }
-
-    @ViewBuilder
-    private func splitActionButtonIcon(_ icon: BonsplitConfiguration.SplitActionButton.Icon) -> some View {
+    private func splitActionButtonIcon(
+        _ icon: BonsplitConfiguration.SplitActionButton.Icon,
+        isHighlighted: Bool
+    ) -> some View {
         let scale = controlIconFontScale
         switch icon {
         case .systemImage(let name):
             // Per-action glyph mapping (size/rotation) composed with the tab
             // title font scale so action icons keep tracking the title size.
+            // A highlighted action (e.g. the browser button while links open in
+            // the external browser) additionally tints its glyph with the accent color.
             let image = TabBarStyling.splitActionSystemImage(for: name)
             Image(systemName: image.name)
                 .font(.system(size: image.pointSize * scale))
                 .rotationEffect(.degrees(image.rotationDegrees))
+                .modifier(SplitActionButtonAccentTint(isHighlighted: isHighlighted))
         case .emoji(let value, let emojiScale):
             Text(value)
                 .font(.system(size: emojiIconFontSize(scale: emojiScale) * scale))
@@ -3744,60 +3735,17 @@ struct TabDropDelegate: DropDelegate {
     }
 }
 
-/// Transparent overlay that forwards only secondary clicks (right-click and
-/// control-click) to a callback while letting normal left clicks fall through
-/// to the SwiftUI control beneath it. Used by the tab bar split action buttons
-/// so a right-click can toggle a host-defined mode without stealing the
-/// button's primary (left-click) action.
-struct SplitActionButtonSecondaryClickCatcher: NSViewRepresentable {
-    let onSecondaryClick: () -> Void
+/// Tints a split action button's glyph with the accent color when the host
+/// marks its action as highlighted (e.g. the browser button while links open in
+/// the external browser); otherwise leaves the button style's own color intact.
+private struct SplitActionButtonAccentTint: ViewModifier {
+    let isHighlighted: Bool
 
-    func makeNSView(context: Context) -> NSView {
-        SecondaryClickView(onSecondaryClick: onSecondaryClick)
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? SecondaryClickView)?.onSecondaryClick = onSecondaryClick
-    }
-
-    final class SecondaryClickView: NSView {
-        var onSecondaryClick: () -> Void
-
-        init(onSecondaryClick: @escaping () -> Void) {
-            self.onSecondaryClick = onSecondaryClick
-            super.init(frame: .zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { nil }
-
-        override func rightMouseDown(with event: NSEvent) {
-            onSecondaryClick()
-        }
-
-        override func mouseDown(with event: NSEvent) {
-            // Control-click is the conventional secondary-click alias on macOS.
-            if event.modifierFlags.contains(.control) {
-                onSecondaryClick()
-            } else {
-                super.mouseDown(with: event)
-            }
-        }
-
-        // Only intercept secondary clicks; pass primary clicks through to the
-        // SwiftUI Button hosted beneath this overlay.
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            switch NSApp.currentEvent?.type {
-            case .rightMouseDown, .rightMouseUp:
-                return super.hitTest(point)
-            case .leftMouseDown, .leftMouseUp:
-                if NSApp.currentEvent?.modifierFlags.contains(.control) == true {
-                    return super.hitTest(point)
-                }
-                return nil
-            default:
-                return nil
-            }
+    func body(content: Content) -> some View {
+        if isHighlighted {
+            content.foregroundStyle(Color.accentColor)
+        } else {
+            content
         }
     }
 }
