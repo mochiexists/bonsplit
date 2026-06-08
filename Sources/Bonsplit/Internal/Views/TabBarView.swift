@@ -1788,7 +1788,15 @@ struct TabBarView: View {
         HStack(spacing: TabBarStyling.splitButtonsSpacing) {
             ForEach(buttons.indices, id: \.self) { index in
                 let button = buttons[index]
+                let isHighlighted = controller.highlightedSplitButtonActions.contains(button.action.rawValue)
                 splitActionButton(button, tooltips: tooltips)
+                    .background(splitActionButtonHighlight(isHighlighted))
+                    .overlay(
+                        SplitActionButtonSecondaryClickCatcher {
+                            guard splitViewController.isInteractive else { return }
+                            controller.requestSplitButtonSecondaryAction(button.action, inPane: pane.id)
+                        }
+                    )
                 .accessibilityIdentifier(splitActionButtonAccessibilityIdentifier(button))
                 .safeHelp(splitActionButtonTooltip(button, tooltips: tooltips))
             }
@@ -1847,6 +1855,25 @@ struct TabBarView: View {
     /// with the tab title text instead of staying pinned at their default size.
     private var controlIconFontScale: CGFloat {
         max(0.1, appearance.tabTitleFontSize / TabBarMetrics.titleFontSize)
+    }
+
+    /// Soft accent glow drawn behind a split action button when the host marks
+    /// its action as highlighted (e.g. the browser button while it opens links
+    /// in the external default browser).
+    @ViewBuilder
+    private func splitActionButtonHighlight(_ isHighlighted: Bool) -> some View {
+        if isHighlighted {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color.accentColor.opacity(0.22))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
+                )
+                .shadow(color: Color.accentColor.opacity(0.55), radius: 4)
+                .tabBarButtonAnimationsDisabled()
+        } else {
+            Color.clear
+        }
     }
 
     @ViewBuilder
@@ -3714,5 +3741,63 @@ struct TabDropDelegate: DropDelegate {
             return decodeTransfer(from: raw)
         }
         return nil
+    }
+}
+
+/// Transparent overlay that forwards only secondary clicks (right-click and
+/// control-click) to a callback while letting normal left clicks fall through
+/// to the SwiftUI control beneath it. Used by the tab bar split action buttons
+/// so a right-click can toggle a host-defined mode without stealing the
+/// button's primary (left-click) action.
+struct SplitActionButtonSecondaryClickCatcher: NSViewRepresentable {
+    let onSecondaryClick: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        SecondaryClickView(onSecondaryClick: onSecondaryClick)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? SecondaryClickView)?.onSecondaryClick = onSecondaryClick
+    }
+
+    final class SecondaryClickView: NSView {
+        var onSecondaryClick: () -> Void
+
+        init(onSecondaryClick: @escaping () -> Void) {
+            self.onSecondaryClick = onSecondaryClick
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        override func rightMouseDown(with event: NSEvent) {
+            onSecondaryClick()
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            // Control-click is the conventional secondary-click alias on macOS.
+            if event.modifierFlags.contains(.control) {
+                onSecondaryClick()
+            } else {
+                super.mouseDown(with: event)
+            }
+        }
+
+        // Only intercept secondary clicks; pass primary clicks through to the
+        // SwiftUI Button hosted beneath this overlay.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            switch NSApp.currentEvent?.type {
+            case .rightMouseDown, .rightMouseUp:
+                return super.hitTest(point)
+            case .leftMouseDown, .leftMouseUp:
+                if NSApp.currentEvent?.modifierFlags.contains(.control) == true {
+                    return super.hitTest(point)
+                }
+                return nil
+            default:
+                return nil
+            }
+        }
     }
 }

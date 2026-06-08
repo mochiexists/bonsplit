@@ -43,6 +43,12 @@ public final class BonsplitController {
     /// Configuration for behavior and appearance
     public var configuration: BonsplitConfiguration
 
+    /// Raw values (see `SplitActionButton.Action.rawValue`) of tab bar split
+    /// action buttons that should render with a highlight/glow. Hosts mutate
+    /// this to reflect a toggled mode (e.g. a browser button that opens links
+    /// externally). Observable, so the tab bar re-renders on change.
+    public var highlightedSplitButtonActions: Set<String> = []
+
     /// When false, drop delegates reject all drags. Set to false for inactive workspaces
     /// so their views (kept alive in a ZStack for state preservation) don't intercept drags
     /// meant for the active workspace.
@@ -212,6 +218,15 @@ public final class BonsplitController {
     /// Request the delegate to handle a host-defined tab bar action.
     public func requestCustomAction(_ identifier: String, inPane pane: PaneID) {
         delegate?.splitTabBar(self, didRequestCustomAction: identifier, inPane: pane)
+    }
+
+    /// Request the delegate to handle a secondary (right / control) click on a
+    /// tab bar split action button.
+    public func requestSplitButtonSecondaryAction(
+        _ action: BonsplitConfiguration.SplitActionButton.Action,
+        inPane pane: PaneID
+    ) {
+        delegate?.splitTabBar(self, didRequestSplitButtonSecondaryAction: action, inPane: pane)
     }
 
     /// Request the delegate to handle a tab context-menu action.
