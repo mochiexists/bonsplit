@@ -87,6 +87,9 @@ public final class BonsplitController {
     /// fall back to `.forkConversationRight`.
     @ObservationIgnored public var tabContextForkConversationDefaultActionProvider: ((TabID, PaneID) -> TabContextAction)?
 
+    /// Host-provided items appended to a tab's context menu.
+    @ObservationIgnored public var tabContextMenuItemsProvider: ((TabID, PaneID) -> [TabContextMenuItem])?
+
     /// Called when the user explicitly requests to close a tab from the tab strip UI.
     /// Internal host-driven closes should not use this hook.
     @ObservationIgnored public var onTabCloseRequest: ((_ tabId: TabID, _ paneId: PaneID, _ source: TabCloseRequestSource) -> Void)?
@@ -221,6 +224,12 @@ public final class BonsplitController {
     public func requestTabMove(toDestination destinationId: String, for tabId: TabID, inPane pane: PaneID) {
         guard let tab = tab(tabId) else { return }
         delegate?.splitTabBar(self, didRequestTabMoveToDestination: destinationId, for: tab, inPane: pane)
+    }
+
+    /// Request the delegate to handle a host-provided tab context-menu item.
+    public func requestTabContextMenuItem(_ identifier: String, for tabId: TabID, inPane pane: PaneID) {
+        guard let tab = tab(tabId) else { return }
+        delegate?.splitTabBar(self, didRequestTabContextMenuItem: identifier, for: tab, inPane: pane)
     }
 
     /// Update an existing tab's metadata
