@@ -1,4 +1,5 @@
 "command.copyIdentifiers.title" = "Copy IDs";
+"command.showIdentifiers.title" = "Show IDs";
 "command.moveTabToNewWorkspace.title" = "Move Tab to New Workspace";
 "tabContext.moveTab" = "Move Tab";
 "command.moveTabToLeftPane.title" = "Move to Left Pane";

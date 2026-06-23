@@ -1073,6 +1073,13 @@ enum TabContextMenuBuilder {
             target: target,
             to: menu
         )
+        addAction(
+            title: localized("command.showIdentifiers.title", defaultValue: "Show IDs"),
+            action: .showIdentifiers,
+            state: state,
+            target: target,
+            to: menu
+        )
 
         return menu
     }
