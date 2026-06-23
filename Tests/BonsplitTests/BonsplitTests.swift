@@ -1605,6 +1605,49 @@ final class BonsplitTests: XCTestCase {
     }
 
     @MainActor
+    func testTabContextMenuBuilderCreatesShowIdentifiersAction() throws {
+        let target = TabContextMenuActionTarget()
+        var selectedAction: TabContextAction?
+        target.onContextAction = { selectedAction = $0 }
+        let state = TabContextMenuState(
+            isPinned: false,
+            isUnread: false,
+            isBrowser: false,
+            isAudioMuted: false,
+            isTerminal: true,
+            hasCustomTitle: false,
+            canCloseToLeft: true,
+            canCloseToRight: true,
+            canCloseOthers: true,
+            canMoveToNewWorkspace: true,
+            canMoveToLeftPane: false,
+            canMoveToRightPane: true,
+            canForkConversation: false,
+            forkConversationDefaultAction: .forkConversationRight,
+            isZoomed: false,
+            hasSplits: true,
+            customItems: [],
+            shortcuts: [:]
+        )
+        let snapshot = TabContextMenuSnapshot(
+            tabId: UUID(),
+            state: state,
+            moveDestinationsProvider: { [] }
+        )
+
+        let menu = TabContextMenuBuilder.makeMenu(snapshot: snapshot, target: target)
+        let copyIndex = try XCTUnwrap(menu.items.firstIndex { $0.title == "Copy IDs" })
+        let showIndex = try XCTUnwrap(menu.items.firstIndex { $0.title == "Show IDs" })
+
+        XCTAssertGreaterThan(showIndex, copyIndex)
+        XCTAssertTrue(menu.items[showIndex].isEnabled)
+
+        target.performContextAction(menu.items[showIndex])
+
+        XCTAssertEqual(selectedAction, .showIdentifiers)
+    }
+
+    @MainActor
     func testBrowserTabContextMenuCreatesAudioMuteToggle() throws {
         let target = TabContextMenuActionTarget()
         var selectedAction: TabContextAction?
@@ -1628,6 +1671,7 @@ final class BonsplitTests: XCTestCase {
                 forkConversationDefaultAction: .forkConversationRight,
                 isZoomed: false,
                 hasSplits: false,
+                customItems: [],
                 shortcuts: [:]
             ),
             moveDestinationsProvider: { [] }
@@ -1662,6 +1706,7 @@ final class BonsplitTests: XCTestCase {
                 forkConversationDefaultAction: .forkConversationRight,
                 isZoomed: false,
                 hasSplits: false,
+                customItems: [],
                 shortcuts: [:]
             ),
             moveDestinationsProvider: { [] }
@@ -1695,6 +1740,7 @@ final class BonsplitTests: XCTestCase {
             forkConversationDefaultAction: .forkConversationLeft,
             isZoomed: false,
             hasSplits: false,
+            customItems: [],
             shortcuts: [:]
         )
         let snapshot = TabContextMenuSnapshot(
