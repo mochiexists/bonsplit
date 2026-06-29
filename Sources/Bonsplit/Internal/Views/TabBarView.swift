@@ -2,6 +2,12 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+#if DEBUG
+private func bonsplitDragLog(_ message: @autoclosure () -> String) {
+    NSLog("%@", message() as NSString)
+}
+#endif
+
 public enum BonsplitTabBarHitRegionRegistry {
     private static let lock = NSLock()
     private static let registeredViews = NSHashTable<NSView>.weakObjects()
@@ -1460,7 +1466,7 @@ struct TabBarView: View {
 
     private func createItemProvider(for tab: TabItem) -> NSItemProvider {
         #if DEBUG
-        NSLog("[Bonsplit Drag] createItemProvider for tab: \(tab.title)")
+        bonsplitDragLog("[Bonsplit Drag] createItemProvider for tab: \(tab.title)")
         #endif
 #if DEBUG
         dlog("tab.dragStart pane=\(pane.id.id.uuidString.prefix(5)) tab=\(tab.id.uuidString.prefix(5)) title=\"\(tab.title)\"")
@@ -3492,7 +3498,7 @@ struct TabDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         #if DEBUG
-        NSLog("[Bonsplit Drag] performDrop called, targetIndex: \(targetIndex)")
+        bonsplitDragLog("[Bonsplit Drag] performDrop called, targetIndex: \(targetIndex)")
         #endif
 #if DEBUG
         dlog("tab.drop pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex)")
@@ -3580,7 +3586,7 @@ struct TabDropDelegate: DropDelegate {
 
     func dropEntered(info: DropInfo) {
         #if DEBUG
-        NSLog("[Bonsplit Drag] dropEntered at index: \(targetIndex)")
+        bonsplitDragLog("[Bonsplit Drag] dropEntered at index: \(targetIndex)")
         dlog(
             "tab.dropEntered pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex) " +
             "hasDrag=\(controller.draggingTab != nil ? 1 : 0) " +
@@ -3597,7 +3603,7 @@ struct TabDropDelegate: DropDelegate {
 
     func dropExited(info: DropInfo) {
         #if DEBUG
-        NSLog("[Bonsplit Drag] dropExited from index: \(targetIndex)")
+        bonsplitDragLog("[Bonsplit Drag] dropExited from index: \(targetIndex)")
         dlog("tab.dropExited pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex)")
         #endif
         dropLifecycle = .idle
