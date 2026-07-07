@@ -103,6 +103,80 @@ public enum BonsplitTabItemHitRegionRegistry {
     }
 }
 
+/// Tracks the window region occupied by the trailing split-action button lane.
+/// The tab context-menu monitor consults this so a right-click landing on a
+/// split button (which can visually overlap a tab when the bar is full) reaches
+/// the button's own context menu instead of being hijacked for the tab menu.
+enum BonsplitSplitButtonHitRegionRegistry {
+    private static let lock = NSLock()
+    private static let registeredViews = NSHashTable<NSView>.weakObjects()
+
+    static func register(_ view: NSView) {
+        lock.lock()
+        registeredViews.add(view)
+        lock.unlock()
+    }
+
+    static func unregister(_ view: NSView) {
+        lock.lock()
+        registeredViews.remove(view)
+        lock.unlock()
+    }
+
+    private static func snapshot() -> [NSView] {
+        lock.lock()
+        let views = registeredViews.allObjects
+        lock.unlock()
+        return views
+    }
+
+    static func containsWindowPoint(_ windowPoint: CGPoint, in window: NSWindow) -> Bool {
+        for view in snapshot() {
+            guard view.window === window, !view.isHidden, view.alphaValue > 0 else { continue }
+            let localPoint = view.convert(windowPoint, from: nil)
+            if view.bounds.contains(localPoint) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+private struct SplitButtonHitRegionView: NSViewRepresentable {
+    func makeNSView(context: Context) -> RegionNSView {
+        RegionNSView()
+    }
+
+    func updateNSView(_ nsView: RegionNSView, context: Context) {}
+
+    final class RegionNSView: NSView {
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        deinit {
+            BonsplitSplitButtonHitRegionRegistry.unregister(self)
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            BonsplitSplitButtonHitRegionRegistry.unregister(self)
+            if window != nil {
+                BonsplitSplitButtonHitRegionRegistry.register(self)
+            }
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            if superview == nil {
+                BonsplitSplitButtonHitRegionRegistry.unregister(self)
+            }
+        }
+
+        // Transparent to hit-testing: it only reports its window frame to the
+        // registry, never intercepts events itself.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
 enum BonsplitTabItemHitTesting {
     // Hit-test rect is intentionally larger than visual chrome. Do not bump
     // visible tab padding/width to fix drag affordance; see cmux #4290 / #4433.
@@ -1813,6 +1887,10 @@ struct TabBarView: View {
         .padding(.leading, TabBarStyling.splitButtonsLeadingPadding)
         .padding(.trailing, TabBarStyling.splitButtonsTrailingPadding)
         .frame(height: tabBarHeight, alignment: .center)
+        // Report the lane's window region so the tab context-menu monitor can
+        // skip right-clicks that land here (they belong to the buttons, even when
+        // the lane visually overlaps a tab in a full bar).
+        .background(SplitButtonHitRegionView())
     }
 
     @ViewBuilder

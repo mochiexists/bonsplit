@@ -1308,6 +1308,13 @@ private struct TabContextMenuPresenter: NSViewRepresentable {
             let point = view.convert(event.locationInWindow, from: nil)
             guard view.bounds.contains(point) else { return event }
 
+            // The trailing split-action button lane can visually overlap a tab
+            // when the bar is full. A right-click there belongs to the button's
+            // own context menu, so don't hijack it for the tab menu.
+            if BonsplitSplitButtonHitRegionRegistry.containsWindowPoint(event.locationInWindow, in: window) {
+                return event
+            }
+
             coordinator.presentMenu(at: point, in: view)
             return nil
         }
