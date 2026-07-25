@@ -86,6 +86,9 @@ public final class BonsplitController {
     /// fall back to `.forkConversationRight`.
     @ObservationIgnored public var tabContextForkConversationDefaultActionProvider: ((TabID, PaneID) -> TabContextAction)?
 
+    /// Host-provided items evaluated when a tab context menu opens.
+    @ObservationIgnored public var tabContextMenuItemsProvider: ((TabID, PaneID) -> [TabContextMenuItem])?
+
     /// Host-provided synchronous check that decides whether the tab context menu should
     /// surface a "Disconnect SSH" action for the tab (e.g. a terminal surface attached to
     /// a host-managed remote connection). Return `true` to show the item, `false` (or omit
@@ -275,6 +278,12 @@ public final class BonsplitController {
     public func requestTabMove(toDestination destinationId: String, for tabId: TabID, inPane pane: PaneID) {
         guard let tab = tab(tabId) else { return }
         delegate?.splitTabBar(self, didRequestTabMoveToDestination: destinationId, for: tab, inPane: pane)
+    }
+
+    /// Request the delegate to handle a host-provided tab context-menu item.
+    public func requestTabContextMenuItem(_ identifier: String, for tabId: TabID, inPane pane: PaneID) {
+        guard let tab = tab(tabId) else { return }
+        delegate?.splitTabBar(self, didRequestTabContextMenuItem: identifier, for: tab, inPane: pane)
     }
 
     /// Update an existing tab's metadata
