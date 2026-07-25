@@ -66,3 +66,16 @@ public struct TabContextMoveDestination: Identifiable, Equatable, Sendable {
         self.isEnabled = isEnabled
     }
 }
+
+/// A host-provided command appended to a tab's context menu.
+public struct TabContextMenuItem: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let title: String
+    public let isEnabled: Bool
+
+    public init(id: String, title: String, isEnabled: Bool = true) {
+        self.id = id
+        self.title = title
+        self.isEnabled = isEnabled
+    }
+}

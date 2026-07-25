@@ -1258,6 +1258,9 @@ struct TabBarView: View {
                     pane.id
                 )
             },
+            customItemsProvider: {
+                controller.tabContextMenuItemsProvider?(TabID(id: tab.id), pane.id) ?? []
+            },
             onSelect: {
                 // Tab selection must be instant. Animating this transaction causes the pane
                 // content (often swapped via opacity) to crossfade, which is undesirable for
@@ -1289,6 +1292,9 @@ struct TabBarView: View {
             },
             onMoveDestination: { destinationId in
                 controller.requestTabMove(toDestination: destinationId, for: TabID(id: tab.id), inPane: pane.id)
+            },
+            onCustomItem: { identifier in
+                controller.requestTabContextMenuItem(identifier, for: TabID(id: tab.id), inPane: pane.id)
             }
         )
         .background(

@@ -69,6 +69,9 @@ public protocol BonsplitDelegate: AnyObject {
     /// Called when the user chooses a host-provided destination from the tab move submenu.
     func splitTabBar(_ controller: BonsplitController, didRequestTabMoveToDestination destinationId: String, for tab: Tab, inPane pane: PaneID)
 
+    /// Called when the user chooses a host-provided item from a tab's context menu.
+    func splitTabBar(_ controller: BonsplitController, didRequestTabContextMenuItem identifier: String, for tab: Tab, inPane pane: PaneID)
+
     // MARK: - Geometry
 
     /// Called when any pane geometry changes (resize, split, close)
@@ -110,6 +113,7 @@ public extension BonsplitDelegate {
     func splitTabBar(_ controller: BonsplitController, didRequestCustomAction identifier: String, inPane pane: PaneID) {}
     func splitTabBar(_ controller: BonsplitController, didRequestTabContextAction action: TabContextAction, for tab: Tab, inPane pane: PaneID) {}
     func splitTabBar(_ controller: BonsplitController, didRequestTabMoveToDestination destinationId: String, for tab: Tab, inPane pane: PaneID) {}
+    func splitTabBar(_ controller: BonsplitController, didRequestTabContextMenuItem identifier: String, for tab: Tab, inPane pane: PaneID) {}
     func splitTabBar(_ controller: BonsplitController, didChangeGeometry snapshot: LayoutSnapshot) {}
     func splitTabBar(_ controller: BonsplitController, shouldNotifyDuringDrag: Bool) -> Bool { false }
     func splitTabBarDividerDragDidBegin(_ controller: BonsplitController) {}

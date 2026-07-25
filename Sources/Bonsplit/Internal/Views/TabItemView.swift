@@ -287,11 +287,13 @@ struct TabItemView: View {
     let moveDestinationsProvider: () -> [TabContextMoveDestination]
     let forkConversationAvailabilityProvider: () -> TabContextForkConversationAvailability
     let forkConversationAvailabilityRefreshHandler: @MainActor () async -> Void
+    let customItemsProvider: () -> [TabContextMenuItem]
     let onSelect: () -> Void
     let onClose: (TabCloseRequestSource) -> Void
     let onZoomToggle: () -> Void
     let onContextAction: (TabContextAction) -> Void
     let onMoveDestination: (String) -> Void
+    let onCustomItem: (String) -> Void
 
     @State private var isHovered = false
     @State private var isCloseHovered = false
@@ -353,10 +355,12 @@ struct TabItemView: View {
                         state: contextMenuState,
                         moveDestinationsProvider: moveDestinationsProvider,
                         forkConversationAvailabilityProvider: forkConversationAvailabilityProvider,
-                        forkConversationAvailabilityRefreshHandler: forkConversationAvailabilityRefreshHandler
+                        forkConversationAvailabilityRefreshHandler: forkConversationAvailabilityRefreshHandler,
+                        customItemsProvider: customItemsProvider
                     ),
                     onContextAction: onContextAction,
-                    onMoveDestination: onMoveDestination
+                    onMoveDestination: onMoveDestination,
+                    onCustomItem: onCustomItem
                 )
             }
         }
@@ -1566,6 +1570,14 @@ enum TabContextMenuBuilder {
             )
         }
 
+        let customItems = snapshot.customItemsProvider()
+        if !customItems.isEmpty {
+            menu.addItem(.separator())
+            for item in customItems {
+                addCustomItem(item, target: target, to: menu)
+            }
+        }
+
         menu.addItem(.separator())
 
         addAction(
@@ -1600,6 +1612,22 @@ enum TabContextMenuBuilder {
                 destinationItem.isEnabled = isEnabled
             }
         }
+    }
+
+    private static func addCustomItem(
+        _ item: TabContextMenuItem,
+        target: TabContextMenuActionTarget,
+        to menu: NSMenu
+    ) {
+        let menuItem = NSMenuItem(
+            title: item.title,
+            action: #selector(TabContextMenuActionTarget.performCustomItem(_:)),
+            keyEquivalent: ""
+        )
+        menuItem.target = target
+        menuItem.representedObject = item.id
+        menuItem.isEnabled = item.isEnabled
+        menu.addItem(menuItem)
     }
 
     private static func moveSubmenuItem(

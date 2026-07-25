@@ -7,25 +7,29 @@ struct TabContextMenuSnapshot {
     let moveDestinationsProvider: () -> [TabContextMoveDestination]
     let forkConversationAvailabilityProvider: () -> TabContextForkConversationAvailability
     let forkConversationAvailabilityRefreshHandler: @MainActor () async -> Void
+    let customItemsProvider: () -> [TabContextMenuItem]
 
     init(
         tabId: UUID,
         state: TabContextMenuState,
         moveDestinationsProvider: @escaping () -> [TabContextMoveDestination],
         forkConversationAvailabilityProvider: @escaping () -> TabContextForkConversationAvailability,
-        forkConversationAvailabilityRefreshHandler: @escaping @MainActor () async -> Void = {}
+        forkConversationAvailabilityRefreshHandler: @escaping @MainActor () async -> Void = {},
+        customItemsProvider: @escaping () -> [TabContextMenuItem] = { [] }
     ) {
         self.tabId = tabId
         self.state = state
         self.moveDestinationsProvider = moveDestinationsProvider
         self.forkConversationAvailabilityProvider = forkConversationAvailabilityProvider
         self.forkConversationAvailabilityRefreshHandler = forkConversationAvailabilityRefreshHandler
+        self.customItemsProvider = customItemsProvider
     }
 }
 
 final class TabContextMenuActionTarget: NSObject {
     var onContextAction: ((TabContextAction) -> Void)?
     var onMoveDestination: ((String) -> Void)?
+    var onCustomItem: ((String) -> Void)?
 
     @objc func performContextAction(_ sender: NSMenuItem) {
         guard let rawValue = sender.representedObject as? String,
@@ -38,6 +42,11 @@ final class TabContextMenuActionTarget: NSObject {
     @objc func performMoveDestination(_ sender: NSMenuItem) {
         guard let destinationId = sender.representedObject as? String else { return }
         onMoveDestination?(destinationId)
+    }
+
+    @objc func performCustomItem(_ sender: NSMenuItem) {
+        guard let itemId = sender.representedObject as? String else { return }
+        onCustomItem?(itemId)
     }
 }
 
@@ -100,6 +109,7 @@ struct TabContextMenuPresenter: NSViewRepresentable {
     let snapshot: TabContextMenuSnapshot
     let onContextAction: (TabContextAction) -> Void
     let onMoveDestination: (String) -> Void
+    let onCustomItem: (String) -> Void
 
     @MainActor
     final class Coordinator {
@@ -128,6 +138,7 @@ struct TabContextMenuPresenter: NSViewRepresentable {
         let coordinator = Coordinator(snapshot: snapshot)
         coordinator.actionTarget.onContextAction = onContextAction
         coordinator.actionTarget.onMoveDestination = onMoveDestination
+        coordinator.actionTarget.onCustomItem = onCustomItem
         return coordinator
     }
 
@@ -159,5 +170,6 @@ struct TabContextMenuPresenter: NSViewRepresentable {
         context.coordinator.snapshot = snapshot
         context.coordinator.actionTarget.onContextAction = onContextAction
         context.coordinator.actionTarget.onMoveDestination = onMoveDestination
+        context.coordinator.actionTarget.onCustomItem = onCustomItem
     }
 }
