@@ -12,12 +12,31 @@ public final class BonsplitController {
             case split(targetPane: PaneID, orientation: SplitOrientation, insertFirst: Bool)
         }
 
+        /// Primary tab that began the drag.
         public let tabId: TabID
+        /// Ordered tabs represented by the drag.
+        public let tabIds: [TabID]
         public let sourcePaneId: PaneID
         public let destination: Destination
 
+        /// Creates a backward-compatible request for one tab.
         public init(tabId: TabID, sourcePaneId: PaneID, destination: Destination) {
             self.tabId = tabId
+            self.tabIds = [tabId]
+            self.sourcePaneId = sourcePaneId
+            self.destination = destination
+        }
+
+        /// Creates a request for one ordered, non-empty tab group.
+        ///
+        /// - Parameters:
+        ///   - tabIds: Ordered tab IDs. The first ID is the primary compatibility tab.
+        ///   - sourcePaneId: Pane that owns every tab when the drag begins.
+        ///   - destination: Requested insert or split destination.
+        public init?(tabIds: [TabID], sourcePaneId: PaneID, destination: Destination) {
+            guard let tabId = tabIds.first, Set(tabIds).count == tabIds.count else { return nil }
+            self.tabId = tabId
+            self.tabIds = tabIds
             self.sourcePaneId = sourcePaneId
             self.destination = destination
         }
@@ -446,31 +465,68 @@ public final class BonsplitController {
     /// - Returns: true if moved.
     @discardableResult
     public func moveTab(_ tabId: TabID, toPane targetPaneId: PaneID, atIndex index: Int? = nil) -> Bool {
-        guard let (sourcePane, sourceIndex) = findTabInternal(tabId) else { return false }
-        guard let targetPane = internalController.paneState(for: targetPaneId) else { return false }
+        moveTabs([tabId], toPane: targetPaneId, atIndex: index, selectedTabId: tabId)
+    }
 
-        let tabItem = sourcePane.tabs[sourceIndex]
-        let movedTab = Tab(from: tabItem)
+    /// Move an ordered group of tabs to a pane as one mutation.
+    ///
+    /// All tabs must currently belong to one pane and share pinned state.
+    ///
+    /// - Parameters:
+    ///   - tabIds: Ordered IDs represented by the move.
+    ///   - targetPaneId: Destination pane.
+    ///   - index: Optional original-array insertion index.
+    ///   - selectedTabId: Active tab after the move. Defaults to the final moved tab.
+    /// - Returns: `true` when the complete group was accepted and moved.
+    @discardableResult
+    public func moveTabs(
+        _ tabIds: [TabID],
+        toPane targetPaneId: PaneID,
+        atIndex index: Int? = nil,
+        selectedTabId: TabID? = nil
+    ) -> Bool {
+        let ids = tabIds.map(\.id)
+        let idSet = Set(ids)
+        guard !ids.isEmpty,
+              idSet.count == ids.count,
+              let firstLocation = findTabInternal(tabIds[0]),
+              let targetPane = internalController.paneState(for: targetPaneId) else { return false }
+        let sourcePane = firstLocation.0
         let sourcePaneId = sourcePane.id
-
+        let orderedItems = sourcePane.tabs.filter { idSet.contains($0.id) }
+        guard orderedItems.count == ids.count,
+              Set(orderedItems.map(\.isPinned)).count == 1 else { return false }
         if sourcePaneId == targetPane.id {
             guard configuration.allowTabReordering else { return false }
-            // Reorder within same pane.
-            let destinationIndex: Int = {
-                if let index { return max(0, min(index, sourcePane.tabs.count)) }
-                return sourcePane.tabs.count
-            }()
-            sourcePane.moveTab(from: sourceIndex, to: destinationIndex)
-            sourcePane.selectTab(tabItem.id)
-            internalController.focusPane(sourcePane.id)
-            delegate?.splitTabBar(self, didSelectTab: movedTab, inPane: sourcePane.id)
-            notifyGeometryChange()
-            return true
+        } else {
+            guard configuration.allowCrossPaneTabMove else { return false }
         }
 
-        guard configuration.allowCrossPaneTabMove else { return false }
-        internalController.moveTab(tabItem, from: sourcePaneId, to: targetPane.id, atIndex: index)
-        delegate?.splitTabBar(self, didMoveTab: movedTab, fromPane: sourcePaneId, toPane: targetPane.id)
+        let activeId = selectedTabId.map(\.id).flatMap { idSet.contains($0) ? $0 : nil }
+            ?? orderedItems.last?.id
+        guard let activeId,
+              internalController.moveTabs(
+                orderedItems,
+                from: sourcePaneId,
+                to: targetPane.id,
+                atIndex: index,
+                selectedTabId: activeId
+              ) else { return false }
+
+        if sourcePaneId == targetPane.id {
+            if let activeItem = orderedItems.first(where: { $0.id == activeId }) {
+                delegate?.splitTabBar(self, didSelectTab: Tab(from: activeItem), inPane: sourcePaneId)
+            }
+        } else {
+            for item in orderedItems {
+                delegate?.splitTabBar(
+                    self,
+                    didMoveTab: Tab(from: item),
+                    fromPane: sourcePaneId,
+                    toPane: targetPane.id
+                )
+            }
+        }
         notifyGeometryChange()
         return true
     }
@@ -670,14 +726,50 @@ public final class BonsplitController {
         movingTab tabId: TabID,
         insertFirst: Bool
     ) -> PaneID? {
+        splitPane(
+            paneId,
+            orientation: orientation,
+            movingTabs: [tabId],
+            selectedTabId: tabId,
+            insertFirst: insertFirst
+        )
+    }
+
+    /// Split a pane by moving an ordered group of existing tabs into one new pane.
+    ///
+    /// Every tab must originate in the same pane and share pinned state.
+    ///
+    /// - Parameters:
+    ///   - paneId: Optional target pane to split. Defaults to the source pane.
+    ///   - orientation: Direction of the new split.
+    ///   - tabIds: Ordered tabs to place in the new pane.
+    ///   - selectedTabId: Active tab in the new pane. Defaults to the final moved tab.
+    ///   - insertFirst: Whether the new pane appears left or above the target.
+    /// - Returns: The new pane ID, or `nil` when validation or a delegate veto fails.
+    @discardableResult
+    public func splitPane(
+        _ paneId: PaneID? = nil,
+        orientation: SplitOrientation,
+        movingTabs tabIds: [TabID],
+        selectedTabId: TabID? = nil,
+        insertFirst: Bool
+    ) -> PaneID? {
         guard configuration.allowSplits,
               configuration.allowCrossPaneTabMove else { return nil }
 
-        // Find the existing tab and its source pane.
-        guard let (sourcePane, tabIndex) = findTabInternal(tabId) else { return nil }
-        let tabItem = sourcePane.tabs[tabIndex]
+        let ids = tabIds.map(\.id)
+        let idSet = Set(ids)
+        guard !ids.isEmpty,
+              idSet.count == ids.count,
+              let (sourcePane, _) = findTabInternal(tabIds[0]) else { return nil }
+        let orderedItems = sourcePane.tabs.filter { idSet.contains($0.id) }
+        guard orderedItems.count == ids.count,
+              Set(orderedItems.map(\.isPinned)).count == 1 else { return nil }
+        let activeId = selectedTabId.map(\.id).flatMap { idSet.contains($0) ? $0 : nil }
+            ?? orderedItems.last?.id
+        guard let activeId else { return nil }
 
-        // Default target to the tab's current pane to match edge-drop behavior on the source pane.
+        // Default target to the group's current pane to match edge-drop behavior.
         let targetPaneId = paneId ?? sourcePane.id
         guard internalController.paneState(for: targetPaneId) != nil else { return nil }
 
@@ -686,10 +778,8 @@ public final class BonsplitController {
             return nil
         }
 
-        // Remove from source first.
-        guard internalController.removeTab(tabItem.id, fromPane: sourcePane.id) != nil else {
-            return nil
-        }
+        let removedItems = sourcePane.removeTabs(orderedItems.map(\.id))
+        guard removedItems.count == orderedItems.count else { return nil }
 
         if sourcePane.tabs.isEmpty {
             if sourcePane.id == targetPaneId {
@@ -706,12 +796,13 @@ public final class BonsplitController {
             }
         }
 
-        // Perform split with the moved tab. Forward the clamped default so the
-        // moved-tab path honors dividerPositionRange like the other overloads.
-        internalController.splitPaneWithTab(
+        // Perform one split with the complete selection. Forward the clamped
+        // default so this path honors dividerPositionRange like other overloads.
+        internalController.splitPaneWithTabs(
             PaneID(id: targetPaneId.id),
             orientation: orientation,
-            tab: tabItem,
+            tabs: removedItems,
+            selectedTabId: activeId,
             insertFirst: insertFirst,
             initialDividerPosition: normalizedInitialDividerPosition(nil)
         )

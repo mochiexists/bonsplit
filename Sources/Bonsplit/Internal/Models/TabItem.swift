@@ -136,14 +136,32 @@ extension TabItem: Transferable {
 
 /// Transfer data that includes source pane information for cross-pane moves
 struct TabTransferData: Codable, Transferable {
+    /// Primary tab that began the drag. Retained for backward-compatible decoders.
     let tab: TabItem
+    /// Ordered grouped selection. Legacy payloads omit this field.
+    let tabs: [TabItem]?
     let sourcePaneId: UUID
     let sourceProcessId: Int32
 
-    init(tab: TabItem, sourcePaneId: UUID, sourceProcessId: Int32 = Int32(ProcessInfo.processInfo.processIdentifier)) {
+    init(
+        tab: TabItem,
+        tabs: [TabItem]? = nil,
+        sourcePaneId: UUID,
+        sourceProcessId: Int32 = Int32(ProcessInfo.processInfo.processIdentifier)
+    ) {
         self.tab = tab
+        self.tabs = tabs
         self.sourcePaneId = sourcePaneId
         self.sourceProcessId = sourceProcessId
+    }
+
+    /// Ordered tabs represented by this transfer, falling back to the legacy primary tab.
+    var orderedTabs: [TabItem] {
+        guard let tabs, !tabs.isEmpty, tabs.contains(where: { $0.id == tab.id }) else {
+            return [tab]
+        }
+        var seenIds: Set<UUID> = []
+        return tabs.filter { seenIds.insert($0.id).inserted }
     }
 
     var isFromCurrentProcess: Bool {
@@ -152,6 +170,7 @@ struct TabTransferData: Codable, Transferable {
 
     private enum CodingKeys: String, CodingKey {
         case tab
+        case tabs
         case sourcePaneId
         case sourceProcessId
     }
@@ -159,6 +178,7 @@ struct TabTransferData: Codable, Transferable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.tab = try container.decode(TabItem.self, forKey: .tab)
+        self.tabs = try container.decodeIfPresent([TabItem].self, forKey: .tabs)
         self.sourcePaneId = try container.decode(UUID.self, forKey: .sourcePaneId)
         // Legacy payloads won't include this field. Treat as foreign process to reject cross-instance drops.
         self.sourceProcessId = try container.decodeIfPresent(Int32.self, forKey: .sourceProcessId) ?? -1
@@ -167,6 +187,7 @@ struct TabTransferData: Codable, Transferable {
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(tab, forKey: .tab)
+        try container.encodeIfPresent(tabs, forKey: .tabs)
         try container.encode(sourcePaneId, forKey: .sourcePaneId)
         try container.encode(sourceProcessId, forKey: .sourceProcessId)
     }

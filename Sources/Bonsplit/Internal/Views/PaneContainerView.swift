@@ -438,21 +438,22 @@ struct UnifiedPaneDropDelegate: DropDelegate {
         ),
            let draggedTab = controller.activeDragTab ?? controller.draggingTab,
            let sourcePaneId = controller.activeDragSourcePaneId ?? controller.dragSourcePaneId {
+            let draggedTabs = controller.activeDragTabs.isEmpty
+                ? (controller.draggingTabs.isEmpty ? [draggedTab] : controller.draggingTabs)
+                : controller.activeDragTabs
             // Clear both observable and non-observable drag state.
             dropLifecycle = .idle
             activeDropZone = nil
-            controller.draggingTab = nil
-            controller.dragSourcePaneId = nil
-            controller.activeDragTab = nil
-            controller.activeDragSourcePaneId = nil
+            controller.clearTabDragState()
 
             if zone == .center {
                 if sourcePaneId != pane.id {
                     withTransaction(Transaction(animation: nil)) {
-                        _ = bonsplitController.moveTab(
-                            TabID(id: draggedTab.id),
+                        _ = bonsplitController.moveTabs(
+                            draggedTabs.map { TabID(id: $0.id) },
                             toPane: pane.id,
-                            atIndex: nil
+                            atIndex: nil,
+                            selectedTabId: TabID(id: draggedTab.id)
                         )
                     }
                 }
@@ -468,7 +469,8 @@ struct UnifiedPaneDropDelegate: DropDelegate {
                 let newPaneId = bonsplitController.splitPane(
                     pane.id,
                     orientation: orientation,
-                    movingTab: TabID(id: draggedTab.id),
+                    movingTabs: draggedTabs.map { TabID(id: $0.id) },
+                    selectedTabId: TabID(id: draggedTab.id),
                     insertFirst: zone.insertsFirst
                 )
 #if DEBUG
@@ -489,11 +491,11 @@ struct UnifiedPaneDropDelegate: DropDelegate {
                 return false
             }
 
-            let request = BonsplitController.ExternalTabDropRequest(
-                tabId: TabID(id: transfer.tab.id),
+            guard let request = BonsplitController.ExternalTabDropRequest(
+                tabIds: transfer.orderedTabs.map { TabID(id: $0.id) },
                 sourcePaneId: PaneID(id: transfer.sourcePaneId),
                 destination: destination
-            )
+            ) else { return false }
             let handled = bonsplitController.onExternalTabDrop?(request) ?? false
             if handled {
                 dropLifecycle = .idle

@@ -26,6 +26,9 @@ final class SplitViewController {
     /// This is @Observable so SwiftUI views react (e.g. allowsHitTesting).
     var draggingTab: TabItem?
 
+    /// Ordered tabs represented by the current drag.
+    var draggingTabs: [TabItem] = []
+
     /// Monotonic counter incremented on each drag start. Used to invalidate stale
     /// timeout timers that would otherwise cancel a new drag of the same tab.
     var dragGeneration: Int = 0
@@ -37,6 +40,7 @@ final class SplitViewController {
     /// @Observable properties above, because SwiftUI batches observable updates and
     /// createItemProvider's writes may not be visible to validateDrop/performDrop yet.
     @ObservationIgnored var activeDragTab: TabItem?
+    @ObservationIgnored var activeDragTabs: [TabItem] = []
     @ObservationIgnored var activeDragSourcePaneId: PaneID?
 
     /// When false, drop delegates reject all drags and NSViews are hidden.
@@ -321,14 +325,35 @@ final class SplitViewController {
         insertFirst: Bool,
         initialDividerPosition: CGFloat? = nil
     ) {
+        splitPaneWithTabs(
+            paneId,
+            orientation: orientation,
+            tabs: [tab],
+            selectedTabId: tab.id,
+            insertFirst: insertFirst,
+            initialDividerPosition: initialDividerPosition
+        )
+    }
+
+    /// Split a pane with an ordered tab group, optionally inserting the new pane first.
+    func splitPaneWithTabs(
+        _ paneId: PaneID,
+        orientation: SplitOrientation,
+        tabs: [TabItem],
+        selectedTabId: UUID,
+        insertFirst: Bool,
+        initialDividerPosition: CGFloat? = nil
+    ) {
+        guard !tabs.isEmpty else { return }
         guard paneStatesById[paneId] != nil else { return }
         clearPaneZoom()
         var createdPane: PaneState?
-        rootNode = splitNodeWithTabRecursively(
+        rootNode = splitNodeWithTabsRecursively(
             node: rootNode,
             targetPaneId: paneId,
             orientation: orientation,
-            tab: tab,
+            tabs: tabs,
+            selectedTabId: selectedTabId,
             insertFirst: insertFirst,
             initialDividerPosition: initialDividerPosition,
             createdPane: &createdPane
@@ -338,11 +363,12 @@ final class SplitViewController {
         }
     }
 
-    private func splitNodeWithTabRecursively(
+    private func splitNodeWithTabsRecursively(
         node: SplitNode,
         targetPaneId: PaneID,
         orientation: SplitOrientation,
-        tab: TabItem,
+        tabs: [TabItem],
+        selectedTabId: UUID,
         insertFirst: Bool,
         initialDividerPosition: CGFloat?,
         createdPane: inout PaneState?
@@ -350,8 +376,9 @@ final class SplitViewController {
         switch node {
         case .pane(let paneState):
             if paneState.id == targetPaneId {
-                // Create new pane with the tab
-                let newPane = PaneState(tabs: [tab])
+                // Create one new pane with the complete ordered selection.
+                let newPane = PaneState(tabs: tabs, selectedTabId: selectedTabId)
+                newPane.selectTabs(tabs.map(\.id), activeTabId: selectedTabId)
 
                 // Start with divider at the edge so there's no flash before animation
                 let splitState: SplitState
@@ -384,21 +411,23 @@ final class SplitViewController {
             return node
 
         case .split(let splitState):
-            splitState.first = splitNodeWithTabRecursively(
+            splitState.first = splitNodeWithTabsRecursively(
                 node: splitState.first,
                 targetPaneId: targetPaneId,
                 orientation: orientation,
-                tab: tab,
+                tabs: tabs,
+                selectedTabId: selectedTabId,
                 insertFirst: insertFirst,
                 initialDividerPosition: initialDividerPosition,
                 createdPane: &createdPane
             )
             if createdPane == nil {
-                splitState.second = splitNodeWithTabRecursively(
+                splitState.second = splitNodeWithTabsRecursively(
                     node: splitState.second,
                     targetPaneId: targetPaneId,
                     orientation: orientation,
-                    tab: tab,
+                    tabs: tabs,
+                    selectedTabId: selectedTabId,
                     insertFirst: insertFirst,
                     initialDividerPosition: initialDividerPosition,
                     createdPane: &createdPane
@@ -526,6 +555,51 @@ final class SplitViewController {
         if sourcePane.tabs.isEmpty && paneStatesById.count > 1 {
             closePane(sourcePaneId)
         }
+    }
+
+    /// Move an ordered tab group between panes as one model mutation.
+    @discardableResult
+    func moveTabs(
+        _ requestedTabs: [TabItem],
+        from sourcePaneId: PaneID,
+        to targetPaneId: PaneID,
+        atIndex index: Int? = nil,
+        selectedTabId: UUID
+    ) -> Bool {
+        guard !requestedTabs.isEmpty,
+              Set(requestedTabs.map(\.id)).count == requestedTabs.count,
+              requestedTabs.contains(where: { $0.id == selectedTabId }),
+              Set(requestedTabs.map(\.isPinned)).count == 1,
+              let sourcePane = paneStatesById[sourcePaneId],
+              let targetPane = paneStatesById[targetPaneId] else { return false }
+        let requestedIds = Set(requestedTabs.map(\.id))
+        let orderedTabs = sourcePane.tabs.filter { requestedIds.contains($0.id) }
+        guard orderedTabs.count == requestedTabs.count else { return false }
+
+        if sourcePaneId == targetPaneId {
+            let destinationIndex = min(max(0, index ?? sourcePane.tabs.count), sourcePane.tabs.count)
+            _ = sourcePane.moveTabs(orderedTabs.map(\.id), to: destinationIndex)
+            sourcePane.selectTabs(orderedTabs.map(\.id), activeTabId: selectedTabId)
+            focusPane(sourcePaneId)
+            return true
+        }
+
+        let originalSourceIndex = sourcePane.tabs.firstIndex { requestedIds.contains($0.id) } ?? sourcePane.tabs.count
+        let removedTabs = sourcePane.removeTabs(orderedTabs.map(\.id))
+        guard removedTabs.count == orderedTabs.count else { return false }
+        guard targetPane.insertTabs(removedTabs, at: index, selectedTabId: selectedTabId) else {
+            _ = sourcePane.insertTabs(removedTabs, at: originalSourceIndex, selectedTabId: selectedTabId)
+            return false
+        }
+        for tab in removedTabs {
+            paneIdsByTabId[tab.id] = targetPaneId
+        }
+        focusPane(targetPaneId)
+
+        if sourcePane.tabs.isEmpty && paneStatesById.count > 1 {
+            closePane(sourcePaneId)
+        }
+        return true
     }
 
     /// Remove a tab while keeping its pane in the tree.

@@ -9,17 +9,22 @@ extension SplitViewController {
         dlog("tab.dragStart pane=\(paneId.id.uuidString.prefix(5)) tab=\(tab.id.uuidString.prefix(5)) title=\"\(tab.title)\"")
 #endif
         dragGeneration += 1
+        let orderedTabs = paneState(for: paneId)?.orderedTabsForDrag(startingAt: tab.id) ?? [tab]
         draggingTab = tab
+        draggingTabs = orderedTabs
         dragSourcePaneId = paneId
         activeDragTab = tab
+        activeDragTabs = orderedTabs
         activeDragSourcePaneId = paneId
         return dragGeneration
     }
 
     func clearTabDragState() {
         draggingTab = nil
+        draggingTabs = []
         dragSourcePaneId = nil
         activeDragTab = nil
+        activeDragTabs = []
         activeDragSourcePaneId = nil
     }
 
@@ -45,7 +50,12 @@ extension SplitViewController {
         let dragGeneration = beginTabDrag(tab, from: paneId)
         installCancelledTabDragCleanup(forGeneration: dragGeneration)
 
-        let transfer = TabTransferData(tab: tab, sourcePaneId: paneId.id)
+        let orderedTabs = activeDragTabs.isEmpty ? [tab] : activeDragTabs
+        let transfer = TabTransferData(
+            tab: tab,
+            tabs: orderedTabs.count > 1 ? orderedTabs : nil,
+            sourcePaneId: paneId.id
+        )
         if let data = try? JSONEncoder().encode(transfer) {
             let provider = NSItemProvider()
             provider.registerDataRepresentation(

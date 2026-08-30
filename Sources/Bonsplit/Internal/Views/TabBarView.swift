@@ -1231,6 +1231,7 @@ struct TabBarView: View {
         TabItemView(
             tab: tab,
             isSelected: pane.selectedTabId == tab.id,
+            isDragSelected: pane.selectedTabIds.contains(tab.id),
             showsZoomIndicator: showsZoomIndicator,
             appearance: appearance,
             fillsWidth: fillsTabsToWidth,
@@ -1261,7 +1262,7 @@ struct TabBarView: View {
             customItemsProvider: {
                 controller.tabContextMenuItemsProvider?(TabID(id: tab.id), pane.id) ?? []
             },
-            onSelect: {
+            onSelect: { modifiers in
                 // Tab selection must be instant. Animating this transaction causes the pane
                 // content (often swapped via opacity) to crossfade, which is undesirable for
                 // terminal/browser surfaces.
@@ -1269,7 +1270,7 @@ struct TabBarView: View {
                 dlog("tab.select pane=\(pane.id.id.uuidString.prefix(5)) tab=\(tab.id.uuidString.prefix(5)) title=\"\(tab.title)\"")
 #endif
                 withTransaction(Transaction(animation: nil)) {
-                    pane.selectTab(tab.id)
+                    pane.selectTab(tab.id, extendingSelection: modifiers.contains(.shift))
                     controller.focusPane(pane.id)
                 }
             },
@@ -1306,7 +1307,11 @@ struct TabBarView: View {
         .onDrag {
             createItemProvider(for: tab)
         } preview: {
-            TabDragPreview(tab: tab, appearance: appearance)
+            TabDragPreview(
+                tab: tab,
+                tabs: pane.orderedTabsForDrag(startingAt: tab.id),
+                appearance: appearance
+            )
         }
         .onDrop(of: [.tabTransfer, .fileURL], delegate: TabDropDelegate(
             targetIndex: index,
@@ -2114,6 +2119,7 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
 
             session = ManualDragSession(
                 sourceTab: source,
+                sourceTabs: pane.orderedTabsForDrag(startingAt: source.id),
                 sourcePaneId: pane.id,
                 startPoint: point,
                 currentTargetIndex: nil,
@@ -2137,7 +2143,7 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
             self.session = session
 
             if let targetIndex,
-               !shouldSuppressIndicator(sourceTabId: session.sourceTab.id, targetIndex: targetIndex) {
+               !shouldSuppressIndicator(sourceTabIds: session.sourceTabs.map(\.id), targetIndex: targetIndex) {
                 onDropStateChanged?(targetIndex, .hovering)
             } else {
                 onDropStateChanged?(nil, .idle)
@@ -2159,14 +2165,14 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
                   let pane,
                   let bonsplitController,
                   let targetIndex = session.currentTargetIndex,
-                  !shouldSuppressIndicator(sourceTabId: session.sourceTab.id, targetIndex: targetIndex),
-                  let currentSourceIndex = pane.tabs.firstIndex(where: { $0.id == session.sourceTab.id }) else {
+                  !shouldSuppressIndicator(sourceTabIds: session.sourceTabs.map(\.id), targetIndex: targetIndex) else {
                 return
             }
 
             let orderBeforeReorder = pane.tabs.map { $0.id }
             withTransaction(Transaction(animation: nil)) {
-                pane.moveTab(from: currentSourceIndex, to: targetIndex)
+                _ = pane.moveTabs(session.sourceTabs.map(\.id), to: targetIndex)
+                pane.selectTabs(session.sourceTabs.map(\.id), activeTabId: session.sourceTab.id)
                 bonsplitController.focusPane(pane.id)
             }
             if pane.tabs.map({ $0.id }) != orderBeforeReorder {
@@ -2196,13 +2202,9 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
 
         private func clearControllerDragStateIfNeeded(sourceTabId: UUID) {
             guard let splitViewController else { return }
-            if splitViewController.draggingTab?.id == sourceTabId {
-                splitViewController.draggingTab = nil
-                splitViewController.dragSourcePaneId = nil
-            }
-            if splitViewController.activeDragTab?.id == sourceTabId {
-                splitViewController.activeDragTab = nil
-                splitViewController.activeDragSourcePaneId = nil
+            if splitViewController.draggingTab?.id == sourceTabId ||
+                splitViewController.activeDragTab?.id == sourceTabId {
+                splitViewController.clearTabDragState()
             }
         }
 
@@ -2239,16 +2241,22 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
             return nil
         }
 
-        private func shouldSuppressIndicator(sourceTabId: UUID, targetIndex: Int) -> Bool {
+        private func shouldSuppressIndicator(sourceTabIds: [UUID], targetIndex: Int) -> Bool {
             guard let pane,
-                  let sourceIndex = pane.tabs.firstIndex(where: { $0.id == sourceTabId }) else {
+                  !sourceTabIds.isEmpty else {
                 return false
             }
-            return targetIndex == sourceIndex || targetIndex == sourceIndex + 1
+            let sourceIds = Set(sourceTabIds)
+            let sourceIndices = pane.tabs.indices.filter { sourceIds.contains(pane.tabs[$0].id) }
+            guard sourceIndices.count == sourceIds.count,
+                  let firstIndex = sourceIndices.first,
+                  let lastIndex = sourceIndices.last else { return false }
+            return targetIndex >= firstIndex && targetIndex <= lastIndex + 1
         }
 
         private struct ManualDragSession {
             let sourceTab: TabItem
+            let sourceTabs: [TabItem]
             let sourcePaneId: PaneID
             let startPoint: NSPoint
             var currentTargetIndex: Int?
@@ -3209,11 +3217,11 @@ struct TabDropDelegate: DropDelegate {
             if let transfer = decodeTransfer(from: info),
                transfer.isFromCurrentProcess {
                 guard bonsplitController.configuration.allowCrossPaneTabMove else { return false }
-                let request = BonsplitController.ExternalTabDropRequest(
-                    tabId: TabID(id: transfer.tab.id),
+                guard let request = BonsplitController.ExternalTabDropRequest(
+                    tabIds: transfer.orderedTabs.map { TabID(id: $0.id) },
                     sourcePaneId: PaneID(id: transfer.sourcePaneId),
                     destination: .insert(targetPane: pane.id, targetIndex: targetIndex)
-                )
+                ) else { return false }
                 let handled = bonsplitController.onExternalTabDrop?(request) ?? false
                 if handled {
                     clearDropState()
@@ -3223,6 +3231,9 @@ struct TabDropDelegate: DropDelegate {
 
             return performFileDrop(info: info)
         }
+        let draggedTabs = controller.activeDragTabs.isEmpty
+            ? (controller.draggingTabs.isEmpty ? [draggedTab] : controller.draggingTabs)
+            : controller.activeDragTabs
 
         if sourcePaneId == pane.id {
             guard bonsplitController.configuration.allowTabReordering else { return false }
@@ -3240,18 +3251,15 @@ struct TabDropDelegate: DropDelegate {
             // Ensure the move itself doesn't animate.
             withTransaction(Transaction(animation: nil)) {
                 if sourcePaneId == pane.id {
-                    guard let sourceIndex = pane.tabs.firstIndex(where: { $0.id == draggedTab.id }) else { return }
-                    // Same-pane no-op: don't mutate the model (and don't show an indicator).
-                    if targetIndex == sourceIndex || targetIndex == sourceIndex + 1 {
-                        return
-                    }
                     orderBeforeReorder = pane.tabs.map { $0.id }
-                    pane.moveTab(from: sourceIndex, to: targetIndex)
+                    _ = pane.moveTabs(draggedTabs.map(\.id), to: targetIndex)
+                    pane.selectTabs(draggedTabs.map(\.id), activeTabId: draggedTab.id)
                 } else {
-                    _ = bonsplitController.moveTab(
-                        TabID(id: draggedTab.id),
+                    _ = bonsplitController.moveTabs(
+                        draggedTabs.map { TabID(id: $0.id) },
                         toPane: pane.id,
-                        atIndex: targetIndex
+                        atIndex: targetIndex,
+                        selectedTabId: TabID(id: draggedTab.id)
                     )
                 }
             }
@@ -3273,10 +3281,7 @@ struct TabDropDelegate: DropDelegate {
         // Must happen synchronously before returning, not in async callback.
         // Setting dropLifecycle to idle prevents dropUpdated from re-setting dropTargetIndex.
         clearDropState()
-        controller.draggingTab = nil
-        controller.dragSourcePaneId = nil
-        controller.activeDragTab = nil
-        controller.activeDragSourcePaneId = nil
+        controller.clearTabDragState()
 
         return true
     }
@@ -3413,12 +3418,16 @@ struct TabDropDelegate: DropDelegate {
     private func shouldSuppressIndicatorForNoopSamePaneDrop() -> Bool {
         guard let draggedTab = controller.draggingTab,
               controller.dragSourcePaneId == pane.id,
-              let sourceIndex = pane.tabs.firstIndex(where: { $0.id == draggedTab.id }) else {
+              pane.tabs.contains(where: { $0.id == draggedTab.id }) else {
             return false
         }
-        // Insertion indices are expressed in "original array" coordinates; after removal,
-        // inserting at `sourceIndex` or `sourceIndex + 1` results in no change.
-        return targetIndex == sourceIndex || targetIndex == sourceIndex + 1
+        let draggedTabs = controller.draggingTabs.isEmpty ? [draggedTab] : controller.draggingTabs
+        let draggedIds = Set(draggedTabs.map(\.id))
+        let sourceIndices = pane.tabs.indices.filter { draggedIds.contains(pane.tabs[$0].id) }
+        guard sourceIndices.count == draggedIds.count,
+              let firstIndex = sourceIndices.first,
+              let lastIndex = sourceIndices.last else { return false }
+        return targetIndex >= firstIndex && targetIndex <= lastIndex + 1
     }
 
     private func decodeTransfer(from string: String) -> TabTransferData? {

@@ -266,6 +266,7 @@ enum TabItemStyling {
 struct TabItemView: View {
     let tab: TabItem
     let isSelected: Bool
+    let isDragSelected: Bool
     let showsZoomIndicator: Bool
     let appearance: BonsplitConfiguration.Appearance
     /// When true, the tab drops its fixed maximum width and grows to fill the slack
@@ -288,7 +289,7 @@ struct TabItemView: View {
     let forkConversationAvailabilityProvider: () -> TabContextForkConversationAvailability
     let forkConversationAvailabilityRefreshHandler: @MainActor () async -> Void
     let customItemsProvider: () -> [TabContextMenuItem]
-    let onSelect: () -> Void
+    let onSelect: (NSEvent.ModifierFlags) -> Void
     let onClose: (TabCloseRequestSource) -> Void
     let onZoomToggle: () -> Void
     let onContextAction: (TabContextAction) -> Void
@@ -365,7 +366,7 @@ struct TabItemView: View {
             }
         }
         .onTapGesture {
-            onSelect()
+            onSelect(NSEvent.modifierFlags)
         }
         .simultaneousGesture(
             TapGesture(count: 2).onEnded {
@@ -380,7 +381,7 @@ struct TabItemView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(tab.title)
         .accessibilityValue(accessibilityValue)
-        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAddTraits(isDragSelected ? [.isButton, .isSelected] : .isButton)
         .safeHelp(tab.title)
         .tabGeometryDebugFrame { frame in
             debugRecordTabFrame(frame)
@@ -1005,7 +1006,10 @@ struct TabItemView: View {
             if isSelected {
                 Rectangle()
                     .fill(TabBarColors.activeTabBackground(for: appearance))
-            } else if TabItemStyling.shouldShowHoverBackground(isHovered: isHovered, isSelected: isSelected) {
+            } else if isDragSelected {
+                Rectangle()
+                    .fill(TabBarColors.activeTabBackground(for: appearance).opacity(0.55))
+            } else if TabItemStyling.shouldShowHoverBackground(isHovered: isHovered, isSelected: isDragSelected) {
                 Rectangle()
                     .fill(TabBarColors.hoveredTabBackground(for: appearance))
             } else {
