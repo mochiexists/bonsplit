@@ -804,6 +804,7 @@ struct TabBarView: View {
     @State private var isHoveringTabBar = false
     @State private var dropTargetIndex: Int?
     @State private var dropLifecycle: TabDropLifecycle = .idle
+    @State private var dropTargetResolver = TabDropTargetResolver()
     @State private var scrollOffset: CGFloat = 0
     @State private var contentWidth: CGFloat = 0
     @State private var tabContentWidthExcludingSplitButtonLane: CGFloat?
@@ -1007,7 +1008,8 @@ struct TabBarView: View {
             bonsplitController: controller,
             controller: splitViewController,
             dropTargetIndex: $dropTargetIndex,
-            dropLifecycle: $dropLifecycle
+            dropLifecycle: $dropLifecycle,
+            liveTargetResolver: dropTargetResolver
         ))
     }
 
@@ -1032,7 +1034,8 @@ struct TabBarView: View {
                 splitViewController: splitViewController,
                 geometryRegistry: tabItemGeometryRegistry,
                 dropTargetIndex: $dropTargetIndex,
-                dropLifecycle: $dropLifecycle
+                dropLifecycle: $dropLifecycle,
+                liveTargetResolver: dropTargetResolver
             )
         }
     }
@@ -2006,6 +2009,7 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
     let geometryRegistry: TabBarItemGeometryRegistry
     @Binding var dropTargetIndex: Int?
     @Binding var dropLifecycle: TabDropLifecycle
+    let liveTargetResolver: TabDropTargetResolver
 
     func makeNSView(context: Context) -> ManualReorderNSView {
         let view = ManualReorderNSView()
@@ -2022,6 +2026,9 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
         view.bonsplitController = bonsplitController
         view.splitViewController = splitViewController
         view.geometryRegistry = geometryRegistry
+        liveTargetResolver.resolve = { [weak view] in
+            view?.currentDropTargetIndex()
+        }
         view.onDropStateChanged = { targetIndex, lifecycle in
             dropTargetIndex = targetIndex
             dropLifecycle = lifecycle
@@ -2239,6 +2246,12 @@ private struct TabBarManualReorderTrackingView: NSViewRepresentable {
                 return pane.tabs.count
             }
             return nil
+        }
+
+        fileprivate func currentDropTargetIndex() -> Int? {
+            guard let window else { return nil }
+            let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            return dropTargetIndex(at: point)
         }
 
         private func shouldSuppressIndicator(sourceTabIds: [UUID], targetIndex: Int) -> Bool {
@@ -3184,6 +3197,14 @@ enum TabDropLifecycle {
     case hovering
 }
 
+final class TabDropTargetResolver {
+    var resolve: (() -> Int?)?
+
+    func currentTargetIndex() -> Int? {
+        resolve?()
+    }
+}
+
 // MARK: - Tab Drop Delegate
 
 struct TabDropDelegate: DropDelegate {
@@ -3193,15 +3214,9 @@ struct TabDropDelegate: DropDelegate {
     let controller: SplitViewController
     @Binding var dropTargetIndex: Int?
     @Binding var dropLifecycle: TabDropLifecycle
+    var liveTargetResolver: TabDropTargetResolver? = nil
 
     func performDrop(info: DropInfo) -> Bool {
-        #if DEBUG
-        NSLog("[Bonsplit Drag] performDrop called, targetIndex: \(targetIndex)")
-        #endif
-#if DEBUG
-        dlog("tab.drop pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex)")
-#endif
-
         // Ensure all drag/drop side-effects run on the main actor. SwiftUI can call these
         // callbacks off-main, and SplitViewController is @MainActor.
         if !Thread.isMainThread {
@@ -3209,6 +3224,16 @@ struct TabDropDelegate: DropDelegate {
                 performDrop(info: info)
             }
         }
+        let resolvedTargetIndex = resolvedTargetIndex()
+        #if DEBUG
+        NSLog("[Bonsplit Drag] performDrop called, targetIndex: \(resolvedTargetIndex)")
+        #endif
+#if DEBUG
+        dlog(
+            "tab.drop pane=\(pane.id.id.uuidString.prefix(5)) " +
+                "targetIndex=\(resolvedTargetIndex) configuredTargetIndex=\(targetIndex)"
+        )
+#endif
 
         // Read from non-observable drag state — @Observable writes from createItemProvider
         // may not have propagated yet when performDrop runs.
@@ -3220,7 +3245,7 @@ struct TabDropDelegate: DropDelegate {
                 guard let request = BonsplitController.ExternalTabDropRequest(
                     tabIds: transfer.orderedTabs.map { TabID(id: $0.id) },
                     sourcePaneId: PaneID(id: transfer.sourcePaneId),
-                    destination: .insert(targetPane: pane.id, targetIndex: targetIndex)
+                    destination: .insert(targetPane: pane.id, targetIndex: resolvedTargetIndex)
                 ) else { return false }
                 let handled = bonsplitController.onExternalTabDrop?(request) ?? false
                 if handled {
@@ -3229,7 +3254,7 @@ struct TabDropDelegate: DropDelegate {
                 return handled
             }
 
-            return performFileDrop(info: info)
+            return performFileDrop(info: info, targetIndex: resolvedTargetIndex)
         }
         let draggedTabs = controller.activeDragTabs.isEmpty
             ? (controller.draggingTabs.isEmpty ? [draggedTab] : controller.draggingTabs)
@@ -3252,13 +3277,13 @@ struct TabDropDelegate: DropDelegate {
             withTransaction(Transaction(animation: nil)) {
                 if sourcePaneId == pane.id {
                     orderBeforeReorder = pane.tabs.map { $0.id }
-                    _ = pane.moveTabs(draggedTabs.map(\.id), to: targetIndex)
+                    _ = pane.moveTabs(draggedTabs.map(\.id), to: resolvedTargetIndex)
                     pane.selectTabs(draggedTabs.map(\.id), activeTabId: draggedTab.id)
                 } else {
                     _ = bonsplitController.moveTabs(
                         draggedTabs.map { TabID(id: $0.id) },
                         toPane: pane.id,
-                        atIndex: targetIndex,
+                        atIndex: resolvedTargetIndex,
                         selectedTabId: TabID(id: draggedTab.id)
                     )
                 }
@@ -3287,19 +3312,21 @@ struct TabDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
+        let resolvedTargetIndex = resolvedTargetIndex()
         #if DEBUG
-        NSLog("[Bonsplit Drag] dropEntered at index: \(targetIndex)")
+        NSLog("[Bonsplit Drag] dropEntered at index: \(resolvedTargetIndex)")
         dlog(
-            "tab.dropEntered pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex) " +
+            "tab.dropEntered pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(resolvedTargetIndex) " +
+            "configuredTargetIndex=\(targetIndex) " +
             "hasDrag=\(controller.draggingTab != nil ? 1 : 0) " +
             "hasActive=\(controller.activeDragTab != nil ? 1 : 0)"
         )
         #endif
         dropLifecycle = .hovering
-        if shouldSuppressIndicatorForNoopSamePaneDrop() {
+        if shouldSuppressIndicatorForNoopSamePaneDrop(targetIndex: resolvedTargetIndex) {
             dropTargetIndex = nil
         } else {
-            dropTargetIndex = targetIndex
+            dropTargetIndex = resolvedTargetIndex
         }
     }
 
@@ -3309,31 +3336,37 @@ struct TabDropDelegate: DropDelegate {
         dlog("tab.dropExited pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex)")
         #endif
         dropLifecycle = .idle
-        if dropTargetIndex == targetIndex {
+        if liveTargetResolver != nil || dropTargetIndex == targetIndex {
             dropTargetIndex = nil
         }
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
+        let resolvedTargetIndex = resolvedTargetIndex()
         // Guard against dropUpdated firing after performDrop/dropExited
         // This is the key fix for the lingering indicator bug
         guard dropLifecycle == .hovering else {
 #if DEBUG
-            dlog("tab.dropUpdated.skip pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex) reason=lifecycle_idle")
+            dlog(
+                "tab.dropUpdated.skip pane=\(pane.id.id.uuidString.prefix(5)) " +
+                    "targetIndex=\(resolvedTargetIndex) configuredTargetIndex=\(targetIndex) " +
+                    "reason=lifecycle_idle"
+            )
 #endif
             return DropProposal(operation: dropOperation(for: info))
         }
         // Only update if this is the active target, and suppress same-pane no-op indicators.
-        if shouldSuppressIndicatorForNoopSamePaneDrop() {
-            if dropTargetIndex == targetIndex {
+        if shouldSuppressIndicatorForNoopSamePaneDrop(targetIndex: resolvedTargetIndex) {
+            if dropTargetIndex == resolvedTargetIndex {
                 dropTargetIndex = nil
             }
-        } else if dropTargetIndex != targetIndex {
-            dropTargetIndex = targetIndex
+        } else if dropTargetIndex != resolvedTargetIndex {
+            dropTargetIndex = resolvedTargetIndex
         }
 #if DEBUG
         dlog(
-            "tab.dropUpdated pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(targetIndex) " +
+            "tab.dropUpdated pane=\(pane.id.id.uuidString.prefix(5)) targetIndex=\(resolvedTargetIndex) " +
+            "configuredTargetIndex=\(targetIndex) " +
             "dropTarget=\(dropTargetIndex.map(String.init) ?? "nil")"
         )
 #endif
@@ -3387,6 +3420,10 @@ struct TabDropDelegate: DropDelegate {
         dropTargetIndex = nil
     }
 
+    private func resolvedTargetIndex() -> Int {
+        liveTargetResolver?.currentTargetIndex() ?? targetIndex
+    }
+
     private func dropOperation(for info: DropInfo) -> DropOperation {
         info.hasItemsConforming(to: [.fileURL]) && !info.hasItemsConforming(to: [.tabTransfer]) ? .copy : .move
     }
@@ -3397,7 +3434,7 @@ struct TabDropDelegate: DropDelegate {
         return UnifiedPaneDropDelegate.hasReadableFileURLs()
     }
 
-    private func performFileDrop(info: DropInfo) -> Bool {
+    private func performFileDrop(info: DropInfo, targetIndex: Int) -> Bool {
         guard canHandleFileDrop(info: info) else { return false }
         let urls = UnifiedPaneDropDelegate.fileURLs(from: NSPasteboard(name: .drag))
         guard !urls.isEmpty else { return false }
@@ -3415,7 +3452,7 @@ struct TabDropDelegate: DropDelegate {
         return handled
     }
 
-    private func shouldSuppressIndicatorForNoopSamePaneDrop() -> Bool {
+    private func shouldSuppressIndicatorForNoopSamePaneDrop(targetIndex: Int) -> Bool {
         guard let draggedTab = controller.draggingTab,
               controller.dragSourcePaneId == pane.id,
               pane.tabs.contains(where: { $0.id == draggedTab.id }) else {
