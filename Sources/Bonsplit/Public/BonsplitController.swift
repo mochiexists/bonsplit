@@ -113,6 +113,22 @@ public final class BonsplitController {
     /// Host-provided items evaluated when a tab context menu opens.
     @ObservationIgnored public var tabContextMenuItemsProvider: ((TabID, PaneID) -> [TabContextMenuItem])?
 
+    /// Host-provided handler for a secondary click (right-click or Control-click) on a
+    /// split action button. Return `true` when the host consumed the click, for example
+    /// by presenting a context menu anchored to `anchorView`; return `false` to ignore it.
+    @ObservationIgnored public var splitActionSecondaryClickHandler: (
+        @MainActor (
+            _ button: BonsplitConfiguration.SplitActionButton,
+            _ paneId: PaneID,
+            _ anchorView: NSView,
+            _ event: NSEvent
+        ) -> Bool
+    )?
+
+    /// Split actions whose buttons render in the accent color to signal a host-defined
+    /// "on" state, for example the new-browser button while links open externally.
+    public var highlightedSplitActions: Set<BonsplitConfiguration.SplitActionButton.Action> = []
+
     /// Host-provided synchronous check that decides whether the tab context menu should
     /// surface a "Disconnect SSH" action for the tab (e.g. a terminal surface attached to
     /// a host-managed remote connection). Return `true` to show the item, `false` (or omit

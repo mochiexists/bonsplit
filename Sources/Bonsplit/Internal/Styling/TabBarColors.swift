@@ -227,15 +227,23 @@ enum TabBarColors {
         effectiveTextColor(for: appearance, secondary: true)
     }
 
-    static func splitActionIcon(for appearance: BonsplitConfiguration.Appearance, isPressed: Bool) -> Color {
-        Color(nsColor: nsColorSplitActionIcon(for: appearance, isPressed: isPressed))
+    static func splitActionIcon(
+        for appearance: BonsplitConfiguration.Appearance,
+        isPressed: Bool,
+        isHighlighted: Bool = false
+    ) -> Color {
+        Color(nsColor: nsColorSplitActionIcon(for: appearance, isPressed: isPressed, isHighlighted: isHighlighted))
     }
 
     static func nsColorSplitActionIcon(
         for appearance: BonsplitConfiguration.Appearance,
-        isPressed: Bool
+        isPressed: Bool,
+        isHighlighted: Bool = false
     ) -> NSColor {
-        isPressed ? nsColorActiveText(for: appearance) : nsColorInactiveText(for: appearance)
+        if isHighlighted {
+            return isPressed ? NSColor.controlAccentColor.withAlphaComponent(0.72) : NSColor.controlAccentColor
+        }
+        return isPressed ? nsColorActiveText(for: appearance) : nsColorInactiveText(for: appearance)
     }
 
     // MARK: - Borders & Indicators

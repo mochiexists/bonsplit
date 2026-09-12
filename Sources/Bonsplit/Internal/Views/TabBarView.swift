@@ -1576,16 +1576,22 @@ struct TabBarView: View {
         _ button: BonsplitConfiguration.SplitActionButton,
         tooltips: BonsplitConfiguration.SplitButtonTooltips
     ) -> some View {
+        let isHighlighted = controller.highlightedSplitActions.contains(button.action)
         if button.activatesOnMouseDown {
             splitActionButtonIcon(button.icon)
                 .frame(height: tabBarLayout.splitActionButtonHeight)
                 .contentShape(Rectangle())
-                .foregroundStyle(TabBarColors.splitActionIcon(for: appearance, isPressed: false))
+                .foregroundStyle(
+                    TabBarColors.splitActionIcon(for: appearance, isPressed: false, isHighlighted: isHighlighted)
+                )
                 .tabBarButtonAnimationsDisabled()
                 .overlay(
-                    SplitActionMouseDownOverlay {
-                        performSplitActionButton(button)
-                    }
+                    SplitActionMouseDownOverlay(
+                        onMouseDown: { performSplitActionButton(button) },
+                        onSecondaryClick: { event, anchorView in
+                            performSplitActionSecondaryClick(button, event: event, anchorView: anchorView)
+                        }
+                    )
                 )
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(splitActionButtonTooltip(button, tooltips: tooltips))
@@ -1596,7 +1602,14 @@ struct TabBarView: View {
             } label: {
                 splitActionButtonIcon(button.icon)
             }
-            .buttonStyle(SplitActionButtonStyle(appearance: appearance, layout: tabBarLayout))
+            .buttonStyle(
+                SplitActionButtonStyle(appearance: appearance, layout: tabBarLayout, isHighlighted: isHighlighted)
+            )
+            .overlay(
+                SplitActionSecondaryClickOverlay { event, anchorView in
+                    performSplitActionSecondaryClick(button, event: event, anchorView: anchorView)
+                }
+            )
         }
     }
 
@@ -1707,6 +1720,20 @@ struct TabBarView: View {
         case .custom(let identifier):
             controller.requestCustomAction(identifier, inPane: pane.id)
         }
+    }
+
+    /// Routes a right-click or Control-click on a split action button to the host.
+    /// Returns `true` when the host consumed it, for example by presenting a menu.
+    private func performSplitActionSecondaryClick(
+        _ button: BonsplitConfiguration.SplitActionButton,
+        event: NSEvent,
+        anchorView: NSView
+    ) -> Bool {
+        guard splitViewController.isInteractive,
+              let handler = controller.splitActionSecondaryClickHandler else {
+            return false
+        }
+        return handler(button, pane.id, anchorView, event)
     }
 
     private func performNewTerminalSplitButtonAction() -> Bool {
@@ -1851,12 +1878,19 @@ private final class SplitActionButtonImageCache {
 private struct SplitActionButtonStyle: ButtonStyle {
     let appearance: BonsplitConfiguration.Appearance
     let layout: TabBarLayout
+    var isHighlighted: Bool = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .frame(height: layout.splitActionButtonHeight)
             .contentShape(Rectangle())
-            .foregroundStyle(TabBarColors.splitActionIcon(for: appearance, isPressed: configuration.isPressed))
+            .foregroundStyle(
+                TabBarColors.splitActionIcon(
+                    for: appearance,
+                    isPressed: configuration.isPressed,
+                    isHighlighted: isHighlighted
+                )
+            )
             .opacity(configuration.isPressed ? 0.72 : 1.0)
             .tabBarButtonAnimationsDisabled()
     }
@@ -1864,27 +1898,102 @@ private struct SplitActionButtonStyle: ButtonStyle {
 
 private struct SplitActionMouseDownOverlay: NSViewRepresentable {
     let onMouseDown: () -> Void
+    let onSecondaryClick: (NSEvent, NSView) -> Bool
 
     func makeNSView(context: Context) -> SplitActionMouseDownNSView {
         let view = SplitActionMouseDownNSView()
         view.onMouseDown = onMouseDown
+        view.onSecondaryClick = onSecondaryClick
         return view
     }
 
     func updateNSView(_ nsView: SplitActionMouseDownNSView, context: Context) {
         nsView.onMouseDown = onMouseDown
+        nsView.onSecondaryClick = onSecondaryClick
     }
 }
 
-private final class SplitActionMouseDownNSView: NSView {
+/// Fires a split action on mouse-down and routes right-clicks and Control-clicks
+/// to the host's secondary-click handler instead.
+final class SplitActionMouseDownNSView: NSView {
     var onMouseDown: (() -> Void)?
+    var onSecondaryClick: ((NSEvent, NSView) -> Bool)?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
 
     override func mouseDown(with event: NSEvent) {
+        if SplitActionSecondaryClickNSView.isSecondaryClick(event),
+           onSecondaryClick?(event, self) == true {
+            return
+        }
         onMouseDown?()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if onSecondaryClick?(event, self) == true {
+            return
+        }
+        super.rightMouseDown(with: event)
+    }
+}
+
+/// Sits over a SwiftUI split action button: invisible to plain clicks so the button
+/// keeps them, but catches right-clicks and Control-clicks for the host.
+private struct SplitActionSecondaryClickOverlay: NSViewRepresentable {
+    let onSecondaryClick: (NSEvent, NSView) -> Bool
+
+    func makeNSView(context: Context) -> SplitActionSecondaryClickNSView {
+        let view = SplitActionSecondaryClickNSView()
+        view.onSecondaryClick = onSecondaryClick
+        return view
+    }
+
+    func updateNSView(_ nsView: SplitActionSecondaryClickNSView, context: Context) {
+        nsView.onSecondaryClick = onSecondaryClick
+    }
+}
+
+final class SplitActionSecondaryClickNSView: NSView {
+    var onSecondaryClick: ((NSEvent, NSView) -> Bool)?
+
+    /// Only claim the hit when the click in flight is a secondary click; every other
+    /// event falls through to the SwiftUI button underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let event = NSApp.currentEvent, Self.isSecondaryClick(event) else {
+            return nil
+        }
+        return super.hitTest(point)
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if onSecondaryClick?(event, self) == true {
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        if onSecondaryClick?(event, self) == true {
+            return
+        }
+        super.rightMouseDown(with: event)
+    }
+
+    static func isSecondaryClick(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+            return true
+        case .leftMouseDown, .leftMouseUp, .leftMouseDragged:
+            return event.modifierFlags.contains(.control)
+        default:
+            return false
+        }
     }
 }
 
